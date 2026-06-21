@@ -1,16 +1,15 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { store } from '../store.js'
-
-const tirePositions = [
-  { key: 'frontLeft', label: '前桥左轮', category: '前桥' },
-  { key: 'frontRight', label: '前桥右轮', category: '前桥' },
-  { key: 'rearLeft1', label: '后桥左轮外', category: '后桥' },
-  { key: 'rearLeft2', label: '后桥左轮内', category: '后桥' },
-  { key: 'rearRight1', label: '后桥右轮外', category: '后桥' },
-  { key: 'rearRight2', label: '后桥右轮内', category: '后桥' },
-  { key: 'spare', label: '备胎', category: '备胎' }
-]
+import {
+  TIRE_POSITIONS,
+  isValidNumber,
+  formatNumber,
+  displayValue,
+  calculateFinalResult,
+  generateRepairAdvice,
+  generateOrderNo
+} from '../utils.js'
 
 function DeliveryOrder({
   getVehicleById,
@@ -18,38 +17,48 @@ function DeliveryOrder({
   saveInspections,
   inspections,
   saveVehicles,
-  vehicles
+  vehicles,
+  deliveryOrders,
+  saveDeliveryOrders
 }) {
   const { vehicleId } = useParams()
   const navigate = useNavigate()
   const vehicle = getVehicleById(vehicleId)
   const inspection = getInspectionByVehicleId(vehicleId)
 
-  const [deliveryOrders, setDeliveryOrders] = useState([])
+  const [savedOrder, setSavedOrder] = useState(null)
   const [isPrinting, setIsPrinting] = useState(false)
+  const [hasSaved, setHasSaved] = useState(false)
 
-  useEffect(() => {
-    loadOrders()
-  }, [])
+  const tireData = inspection?.tireData || {}
+  const coldData = inspection?.coldMachineData || {}
 
-  async function loadOrders() {
-    const orders = await store.getDeliveryOrders()
-    setDeliveryOrders(orders)
-  }
+  const result = useMemo(() => {
+    if (!vehicle || !inspection) return { approved: false, reason: '数据不完整' }
+    return calculateFinalResult(vehicle, tireData, coldData)
+  }, [vehicle, inspection])
+
+  const repairAdvice = useMemo(() => {
+    if (!vehicle || !tireData || !coldData) return null
+    return generateRepairAdvice(vehicle, tireData, coldData)
+  }, [vehicle, tireData, coldData])
+
+  const orderNo = useMemo(() => generateOrderNo(vehicleId), [vehicleId])
 
   function getRecommendedPressure(actualPressure, standardPressure) {
+    if (!isValidNumber(actualPressure)) return formatNumber(standardPressure)
     const actual = parseFloat(actualPressure)
-    if (isNaN(actual)) return standardPressure.toFixed(1)
     if (actual < standardPressure - 0.5) {
-      return standardPressure.toFixed(1)
+      return formatNumber(standardPressure)
     }
-    return actual.toFixed(1)
+    return formatNumber(actual)
   }
 
   function getTireStatus(actualPressure, standardPressure, sensorStatus) {
+    if (!isValidNumber(actualPressure)) {
+      return { text: '未检测', level: 'warning' }
+    }
     const actual = parseFloat(actualPressure)
-    if (isNaN(actual)) return { text: '未检测', level: 'normal' }
-
     let statusText = ''
     let level = 'normal'
 
@@ -71,60 +80,49 @@ function DeliveryOrder({
     return { text: statusText.trim(), level }
   }
 
-  function calculateOverallResult() {
-    if (!vehicle || !inspection) return { approved: false, reason: '数据不完整' }
+  async function handleSaveAndConfirm() {
+    if (!vehicle || !inspection) return
 
-    const standardPressure = vehicle.standardPressure
-    const tireData = inspection.tireData || {}
-    const coldData = inspection.coldMachineData || {}
+    const now = new Date()
+    const createdAt = now.toISOString()
+    const createdAtStr = now.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
 
-    let issues = []
-    let criticalIssues = []
-
-    Object.entries(tireData).forEach(([key, tire]) => {
-      const pressure = parseFloat(tire.pressure)
-      if (!isNaN(pressure) && pressure < standardPressure - 0.8) {
-        criticalIssues.push(`${tirePositions.find(p => p.key === key)?.label || key}严重缺气`)
-      } else if (!isNaN(pressure) && pressure < standardPressure - 0.5) {
-        issues.push(`${tirePositions.find(p => p.key === key)?.label || key}胎压偏低`)
+    const orderData = {
+      id: 'do' + Date.now(),
+      orderNo,
+      vehicleId: vehicle.id,
+      plate: vehicle.plate,
+      model: vehicle.model,
+      carrier: vehicle.carrier,
+      standardPressure: vehicle.standardPressure,
+      inspector: inspection.inspector,
+      startTime: inspection.startTime,
+      endTime: inspection.endTime || createdAtStr,
+      createdAt,
+      createdAtStr,
+      tireData: JSON.parse(JSON.stringify(tireData)),
+      coldMachineData: JSON.parse(JSON.stringify(coldData)),
+      repairAdvice: repairAdvice ? repairAdvice.adviceText : '',
+      riskLevel: repairAdvice ? repairAdvice.riskLevel : 'low',
+      finalResult: {
+        approved: result.approved,
+        reason: result.reason
       }
-      if (tire.sensorStatus === 'drift') {
-        issues.push(`${tirePositions.find(p => p.key === key)?.label || key}传感器漂移`)
-      }
-    })
-
-    if (coldData.compressorStatus === 'not_start') {
-      criticalIssues.push('冷机无法启动')
-    } else if (coldData.compressorStatus === 'frequent') {
-      issues.push('冷机启停频繁')
     }
 
-    const returnTemp = parseFloat(coldData.returnTemp)
-    const setTemp = parseFloat(coldData.setTemp)
-    if (!isNaN(returnTemp) && !isNaN(setTemp) && returnTemp > setTemp + 3) {
-      issues.push('回风温度偏高，制冷效果不佳')
-    }
+    const newOrders = [...deliveryOrders, orderData]
+    await saveDeliveryOrders(newOrders)
 
-    const loadBefore = parseFloat(coldData.loadBefore)
-    const loadAfter = parseFloat(coldData.loadAfter)
-    if (!isNaN(loadBefore) && !isNaN(loadAfter) && loadBefore - loadAfter > 15) {
-      issues.push('补气前后负载差较大，胎压影响能耗显著')
-    }
+    const updatedInspections = inspections.map(i =>
+      i.id === inspection.id
+        ? { ...i, status: 'completed' }
+        : i
+    )
+    await saveInspections(updatedInspections)
 
-    const approved = criticalIssues.length === 0 && issues.length <= 2
-
-    let reason = ''
-    if (criticalIssues.length > 0) {
-      reason = '存在严重问题，禁止出车：' + criticalIssues.join('；')
-    } else if (issues.length > 2) {
-      reason = '问题较多，建议处理后再出车：' + issues.slice(0, 3).join('；') + '等'
-    } else if (issues.length > 0) {
-      reason = '基本合格，注意事项：' + issues.join('；')
-    } else {
-      reason = '各项检查合格，允许装货出车'
-    }
-
-    return { approved, reason, issues, criticalIssues }
+    setSavedOrder(orderData)
+    setHasSaved(true)
+    alert(`交车单已保存！\n单号：${orderNo}`)
   }
 
   function handleBackToInspection() {
@@ -157,10 +155,18 @@ function DeliveryOrder({
     )
   }
 
-  const result = calculateOverallResult()
-  const tireData = inspection.tireData || {}
-  const coldData = inspection.coldMachineData || {}
-  const orderNo = 'JC' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + vehicleId.slice(-4).toUpperCase()
+  const compressorMap = {
+    normal: '启停正常',
+    frequent: '启停频繁',
+    not_start: '无法启动'
+  }
+
+  const loadBeforeVal = parseFloat(coldData.loadBefore)
+  const loadAfterVal = parseFloat(coldData.loadAfter)
+  const hasLoadData = !isNaN(loadBeforeVal) && !isNaN(loadAfterVal)
+  const loadDiff = hasLoadData ? (loadBeforeVal - loadAfterVal).toFixed(1) : null
+
+  const displayOrderNo = savedOrder ? savedOrder.orderNo : orderNo
 
   return (
     <div>
@@ -170,6 +176,23 @@ function DeliveryOrder({
           <div style={{ display: 'flex', gap: '10px' }}>
             <button className="btn" onClick={handleBackToInspection}>← 返回检查</button>
             <button className="btn btn-primary" onClick={handlePrint}>🖨 打印交车单</button>
+            {!hasSaved && (
+              <button className="btn btn-success" onClick={handleSaveAndConfirm}>
+                💾 保存为正式记录
+              </button>
+            )}
+            {hasSaved && (
+              <span style={{
+                padding: '8px 12px',
+                background: '#f6ffed',
+                border: '1px solid #b7eb8f',
+                color: '#52c41a',
+                borderRadius: '4px',
+                fontSize: '13px'
+              }}>
+                ✓ 已保存
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -177,7 +200,7 @@ function DeliveryOrder({
       <div className="card delivery-order">
         <div className="order-header">
           <h2>冷藏车出车前检查交车单</h2>
-          <div className="order-no">单据编号：{orderNo}</div>
+          <div className="order-no">单据编号：{displayOrderNo}{hasSaved && '（已归档）'}</div>
         </div>
 
         <div className="order-section">
@@ -223,14 +246,14 @@ function DeliveryOrder({
               </tr>
             </thead>
             <tbody>
-              {tirePositions.map(pos => {
+              {TIRE_POSITIONS.map(pos => {
                 const tire = tireData[pos.key] || {}
                 const status = getTireStatus(tire.pressure, vehicle.standardPressure, tire.sensorStatus)
                 const recommended = getRecommendedPressure(tire.pressure, vehicle.standardPressure)
                 return (
                   <tr key={pos.key}>
                     <td>{pos.label}</td>
-                    <td>{tire.pressure || '-'}</td>
+                    <td>{displayValue(tire.pressure, 'Bar', '未记录')}</td>
                     <td style={{ color: '#1890ff', fontWeight: 600 }}>{recommended}</td>
                     <td>{tire.sensorStatus === 'drift' ? '读数漂移' : '读数一致'}</td>
                     <td style={{
@@ -250,41 +273,50 @@ function DeliveryOrder({
           <div className="order-info-grid">
             <div className="order-info-item">
               <span className="label">回风温度</span>
-              <span className="value">{coldData.returnTemp ? coldData.returnTemp + ' °C' : '-'}</span>
+              <span className="value">{displayValue(coldData.returnTemp, '°C')}</span>
             </div>
             <div className="order-info-item">
               <span className="label">设定温度</span>
-              <span className="value">{coldData.setTemp ? coldData.setTemp + ' °C' : '-'}</span>
+              <span className="value">{displayValue(coldData.setTemp, '°C')}</span>
             </div>
             <div className="order-info-item">
               <span className="label">压缩机状态</span>
-              <span className="value">
-                {coldData.compressorStatus === 'normal' ? '启停正常' :
-                 coldData.compressorStatus === 'frequent' ? '启停频繁' :
-                 coldData.compressorStatus === 'not_start' ? '无法启动' : '-'}
-              </span>
+              <span className="value">{coldData.compressorStatus ? compressorMap[coldData.compressorStatus] : '未记录'}</span>
             </div>
             <div className="order-info-item">
               <span className="label">补气前负载</span>
-              <span className="value">{coldData.loadBefore ? coldData.loadBefore + '%' : '-'}</span>
+              <span className="value">{displayValue(coldData.loadBefore, '%')}</span>
             </div>
             <div className="order-info-item">
               <span className="label">补气后负载</span>
-              <span className="value">{coldData.loadAfter ? coldData.loadAfter + '%' : '-'}</span>
+              <span className="value">{displayValue(coldData.loadAfter, '%')}</span>
             </div>
             <div className="order-info-item">
               <span className="label">负载差值</span>
               <span className="value" style={{
-                color: coldData.loadBefore && coldData.loadAfter &&
-                  parseFloat(coldData.loadBefore) - parseFloat(coldData.loadAfter) > 10
-                  ? '#d48806' : '#333'
+                color: loadDiff !== null && parseFloat(loadDiff) > 10 ? '#d48806' : '#333'
               }}>
-                {coldData.loadBefore && coldData.loadAfter
-                  ? (parseFloat(coldData.loadBefore) - parseFloat(coldData.loadAfter)).toFixed(1) + '%'
-                  : '-'}
+                {loadDiff !== null ? loadDiff + '%' : '未记录'}
               </span>
             </div>
           </div>
+
+          {repairAdvice && (
+            <div style={{
+              marginTop: '16px',
+              padding: '14px',
+              background: '#e6fffb',
+              border: '1px solid #87e8de',
+              borderRadius: '6px'
+            }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#08979c', marginBottom: '6px' }}>
+                🛠 维修建议摘要（补气前后对比）
+              </div>
+              <div style={{ fontSize: '13px', color: '#262626', lineHeight: 1.7 }}>
+                {repairAdvice.adviceText}
+              </div>
+            </div>
+          )}
 
           {coldData.remarks && (
             <div style={{ marginTop: '16px' }}>
@@ -321,7 +353,7 @@ function DeliveryOrder({
 
       {!isPrinting && (
         <div style={{ textAlign: 'center', marginTop: '20px', color: '#8c8c8c', fontSize: '13px' }}>
-          交车单一式两份，维修班组和调度各留存一份
+          交车单一式两份，维修班组和调度各留存一份 | {hasSaved ? '已归档保存' : '点击"保存为正式记录"完成归档'}
         </div>
       )}
     </div>

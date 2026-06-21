@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-
-const tirePositions = [
-  { key: 'frontLeft', label: '前桥左轮', category: '前桥' },
-  { key: 'frontRight', label: '前桥右轮', category: '前桥' },
-  { key: 'rearLeft1', label: '后桥左轮外', category: '后桥' },
-  { key: 'rearLeft2', label: '后桥左轮内', category: '后桥' },
-  { key: 'rearRight1', label: '后桥右轮外', category: '后桥' },
-  { key: 'rearRight2', label: '后桥右轮内', category: '后桥' },
-  { key: 'spare', label: '备胎', category: '备胎' }
-]
+import {
+  TIRE_POSITIONS,
+  isValidNumber,
+  validateTireData,
+  validateColdMachineData,
+  generateRepairAdvice
+} from '../utils.js'
 
 function InspectionWindow({
   getVehicleById,
@@ -28,49 +25,59 @@ function InspectionWindow({
   const [inspector, setInspector] = useState('')
   const [tireData, setTireData] = useState({})
   const [coldMachineData, setColdMachineData] = useState(null)
+  const [tireValidation, setTireValidation] = useState({ valid: true, missing: [] })
+  const [coldValidation, setColdValidation] = useState({ valid: true, missing: [] })
+  const [showTireError, setShowTireError] = useState(false)
+  const [showColdError, setShowColdError] = useState(false)
 
   useEffect(() => {
     if (existingInspection) {
       setInspector(existingInspection.inspector || '')
-      setTireData(existingInspection.tireData || {})
-      setColdMachineData(existingInspection.coldMachineData)
+      setTireData(existingInspection.tireData || initEmptyTireData())
+      setColdMachineData(existingInspection.coldMachineData || initEmptyColdData())
       if (existingInspection.status === 'tire_done') {
         setCurrentStep(2)
       } else if (existingInspection.status === 'cold_done' || existingInspection.status === 'completed') {
         setCurrentStep(2)
       }
     } else {
-      initTireData()
-      initColdMachineData()
+      setTireData(initEmptyTireData())
+      setColdMachineData(initEmptyColdData())
     }
   }, [vehicleId])
 
-  function initTireData() {
+  useEffect(() => {
+    setTireValidation(validateTireData(tireData))
+  }, [tireData])
+
+  useEffect(() => {
+    setColdValidation(validateColdMachineData(coldMachineData))
+  }, [coldMachineData])
+
+  function initEmptyTireData() {
     const data = {}
-    tirePositions.forEach(pos => {
-      data[pos.key] = {
-        pressure: '',
-        sensorStatus: 'normal'
-      }
+    TIRE_POSITIONS.forEach(pos => {
+      data[pos.key] = { pressure: '', sensorStatus: 'normal' }
     })
-    setTireData(data)
+    return data
   }
 
-  function initColdMachineData() {
-    setColdMachineData({
+  function initEmptyColdData() {
+    return {
       returnTemp: '',
       setTemp: '',
       compressorStatus: 'normal',
       loadBefore: '',
       loadAfter: '',
       remarks: ''
-    })
+    }
   }
 
   function handleTirePressureChange(key, value) {
+    const val = value === '' ? '' : value
     setTireData(prev => ({
       ...prev,
-      [key]: { ...prev[key], pressure: value }
+      [key]: { ...prev[key], pressure: val }
     }))
   }
 
@@ -82,61 +89,40 @@ function InspectionWindow({
   }
 
   function handleColdMachineChange(field, value) {
+    const val = value === '' ? '' : value
     setColdMachineData(prev => ({
       ...prev,
-      [field]: value
+      [field]: val
     }))
   }
 
-  function calculateRisk() {
-    if (!vehicle || !tireData || !coldMachineData) return null
-
-    const standardPressure = vehicle.standardPressure
-    let lowTireCount = 0
-    let driftCount = 0
-
-    Object.values(tireData).forEach(tire => {
-      const pressure = parseFloat(tire.pressure)
-      if (!isNaN(pressure) && pressure < standardPressure - 0.5) {
-        lowTireCount++
-      }
-      if (tire.sensorStatus === 'drift') {
-        driftCount++
-      }
-    })
-
-    const loadBefore = parseFloat(coldMachineData.loadBefore)
-    const loadAfter = parseFloat(coldMachineData.loadAfter)
-    let loadDiff = 0
-    if (!isNaN(loadBefore) && !isNaN(loadAfter)) {
-      loadDiff = loadBefore - loadAfter
-    }
-
-    let riskLevel = 'low'
-    let riskDesc = '当前车辆状态良好，无明显能耗风险。'
-
-    if (lowTireCount >= 3 || (lowTireCount >= 2 && loadDiff > 15)) {
-      riskLevel = 'high'
-      riskDesc = '存在较高运输能耗风险！多个轮胎胎压不足，将导致冷机负载增加，建议立即补气后再出车。'
-    } else if (lowTireCount >= 1 || driftCount >= 2 || (loadDiff > 10 && lowTireCount > 0)) {
-      riskLevel = 'medium'
-      riskDesc = '存在一定能耗风险，部分轮胎胎压偏低或传感器有漂移现象，建议补气后再观察冷机负载情况。'
-    }
-
-    return {
-      level: riskLevel,
-      description: riskDesc,
-      lowTireCount,
-      driftCount,
-      loadDiff: loadDiff.toFixed(1)
-    }
-  }
+  const repairAdvice = (vehicle && tireData && coldMachineData)
+    ? generateRepairAdvice(vehicle, tireData, coldMachineData)
+    : null
 
   async function handleNextStep() {
     if (currentStep === 1) {
+      const validation = validateTireData(tireData)
+      if (!validation.valid) {
+        setTireValidation(validation)
+        setShowTireError(true)
+        return
+      }
+      setShowTireError(false)
       await saveTireInspection()
       setCurrentStep(2)
     } else if (currentStep === 2) {
+      const validation = validateColdMachineData(coldMachineData)
+      if (!validation.valid) {
+        setColdValidation(validation)
+        setShowColdError(true)
+        return
+      }
+      if (!inspector.trim()) {
+        alert('请先填写检验员姓名')
+        return
+      }
+      setShowColdError(false)
       await saveFullInspection()
       navigate(`/delivery/${vehicleId}`)
     }
@@ -182,14 +168,33 @@ function InspectionWindow({
   async function saveFullInspection() {
     const now = new Date()
     const timeStr = now.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+    const advice = generateRepairAdvice(vehicle, tireData, coldMachineData)
+    const coldDataWithAdvice = {
+      ...coldMachineData,
+      repairAdvice: advice ? advice.adviceText : '',
+      riskLevel: advice ? advice.riskLevel : 'low'
+    }
 
     if (existingInspection) {
       const updated = inspections.map(i =>
         i.id === existingInspection.id
-          ? { ...i, tireData, coldMachineData, inspector, endTime: timeStr, status: 'cold_done' }
+          ? { ...i, tireData, coldMachineData: coldDataWithAdvice, inspector, endTime: timeStr, status: 'cold_done' }
           : i
       )
       await saveInspections(updated)
+    } else {
+      const newInspection = {
+        id: 'ins' + Date.now(),
+        vehicleId: vehicle.id,
+        plate: vehicle.plate,
+        inspector,
+        startTime: timeStr,
+        endTime: timeStr,
+        status: 'cold_done',
+        tireData,
+        coldMachineData: coldDataWithAdvice
+      }
+      await saveInspections([...inspections, newInspection])
     }
 
     const updatedVehicles = vehicles.map(v =>
@@ -206,7 +211,19 @@ function InspectionWindow({
     return <div>车辆不存在</div>
   }
 
-  const riskAssessment = currentStep === 2 ? calculateRisk() : null
+  function renderTireItems(category) {
+    return TIRE_POSITIONS.filter(p => p.category === category).map(pos => (
+      <TireInputItem
+        key={pos.key}
+        position={pos}
+        tireData={tireData[pos.key]}
+        standardPressure={vehicle.standardPressure}
+        onPressureChange={val => handleTirePressureChange(pos.key, val)}
+        onSensorChange={status => handleSensorStatusChange(pos.key, status)}
+        hasError={showTireError && tireData[pos.key] && !isValidNumber(tireData[pos.key].pressure)}
+      />
+    ))
+  }
 
   return (
     <div>
@@ -251,8 +268,8 @@ function InspectionWindow({
               type="text"
               value={inspector}
               onChange={e => setInspector(e.target.value)}
-              placeholder="输入姓名"
-              style={{ width: '100px', padding: '4px 8px', border: '1px solid #91d5ff', borderRadius: '4px' }}
+              placeholder="请输入姓名"
+              style={{ width: '120px', padding: '4px 8px', border: '1px solid #91d5ff', borderRadius: '4px' }}
             />
           </span>
         </div>
@@ -262,51 +279,41 @@ function InspectionWindow({
         <div className="card">
           <div className="card-title">🛞 胎压与传感器状态检查</div>
 
-          <h3 className="section-title">前桥</h3>
-          <div className="tire-grid">
-            {tirePositions.filter(p => p.category === '前桥').map(pos => (
-              <TireInputItem
-                key={pos.key}
-                position={pos}
-                tireData={tireData[pos.key]}
-                standardPressure={vehicle.standardPressure}
-                onPressureChange={val => handleTirePressureChange(pos.key, val)}
-                onSensorChange={status => handleSensorStatusChange(pos.key, status)}
-              />
-            ))}
-          </div>
+          {showTireError && tireValidation.missing.length > 0 && (
+            <div style={{
+              background: '#fff1f0',
+              border: '1px solid #ffa39e',
+              borderRadius: '6px',
+              padding: '12px 16px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ color: '#cf1322', fontWeight: 600, marginBottom: '8px' }}>
+                ⚠ 以下必填项未完成，请补充后再进入下一步：
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '20px', color: '#cf1322', fontSize: '13px' }}>
+                {tireValidation.missing.map((m, idx) => (
+                  <li key={idx} style={{ marginBottom: '4px' }}>{m}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
-          <h3 className="section-title">后桥</h3>
-          <div className="tire-grid">
-            {tirePositions.filter(p => p.category === '后桥').map(pos => (
-              <TireInputItem
-                key={pos.key}
-                position={pos}
-                tireData={tireData[pos.key]}
-                standardPressure={vehicle.standardPressure}
-                onPressureChange={val => handleTirePressureChange(pos.key, val)}
-                onSensorChange={status => handleSensorStatusChange(pos.key, status)}
-              />
-            ))}
-          </div>
+          <h3 className="section-title">前桥（2个轮位）</h3>
+          <div className="tire-grid">{renderTireItems('前桥')}</div>
 
-          <h3 className="section-title">备胎</h3>
+          <h3 className="section-title">后桥（4个轮位）</h3>
+          <div className="tire-grid">{renderTireItems('后桥')}</div>
+
+          <h3 className="section-title">备胎（1个轮位）</h3>
           <div className="tire-grid" style={{ gridTemplateColumns: '1fr' }}>
-            {tirePositions.filter(p => p.category === '备胎').map(pos => (
-              <TireInputItem
-                key={pos.key}
-                position={pos}
-                tireData={tireData[pos.key]}
-                standardPressure={vehicle.standardPressure}
-                onPressureChange={val => handleTirePressureChange(pos.key, val)}
-                onSensorChange={status => handleSensorStatusChange(pos.key, status)}
-              />
-            ))}
+            {renderTireItems('备胎')}
           </div>
 
           <div className="action-bar">
-            <div style={{ color: '#8c8c8c', fontSize: '13px' }}>
-              提示：标准胎压 {vehicle.standardPressure} Bar，低于标准 0.5 Bar 以上建议补气
+            <div style={{ color: tireValidation.valid ? '#52c41a' : '#ff4d4f', fontSize: '13px' }}>
+              {tireValidation.valid
+                ? '✓ 胎压数据已填写完整'
+                : `⚠ 还有 ${tireValidation.missing.length} 项未完成`}
             </div>
             <div className="action-bar-right">
               <button className="btn" onClick={handleBack}>取消</button>
@@ -322,34 +329,59 @@ function InspectionWindow({
         <div className="card">
           <div className="card-title">❄️ 冷机联动试车</div>
 
+          {showColdError && coldValidation.missing.length > 0 && (
+            <div style={{
+              background: '#fff1f0',
+              border: '1px solid #ffa39e',
+              borderRadius: '6px',
+              padding: '12px 16px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ color: '#cf1322', fontWeight: 600, marginBottom: '8px' }}>
+                ⚠ 以下必填项未完成，请补充后再生成交车单：
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '20px', color: '#cf1322', fontSize: '13px' }}>
+                {coldValidation.missing.map((m, idx) => (
+                  <li key={idx} style={{ marginBottom: '4px' }}>{m}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="cold-machine-section">
             <div>
               <h3 className="section-title">温度记录</h3>
 
               <div className="form-row">
                 <div className="form-item">
-                  <label>回风温度 (°C)</label>
+                  <label>回风温度 (°C) <span style={{ color: '#ff4d4f' }}>*</span></label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="如：-18.5"
-                    value={coldMachineData?.returnTemp || ''}
+                    value={coldMachineData?.returnTemp ?? ''}
                     onChange={e => handleColdMachineChange('returnTemp', e.target.value)}
+                    style={{
+                      borderColor: showColdError && !isValidNumber(coldMachineData?.returnTemp) ? '#ff4d4f' : undefined
+                    }}
                   />
                 </div>
                 <div className="form-item">
-                  <label>设定温度 (°C)</label>
+                  <label>设定温度 (°C) <span style={{ color: '#ff4d4f' }}>*</span></label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="如：-20.0"
-                    value={coldMachineData?.setTemp || ''}
+                    value={coldMachineData?.setTemp ?? ''}
                     onChange={e => handleColdMachineChange('setTemp', e.target.value)}
+                    style={{
+                      borderColor: showColdError && !isValidNumber(coldMachineData?.setTemp) ? '#ff4d4f' : undefined
+                    }}
                   />
                 </div>
               </div>
 
-              <h3 className="section-title">压缩机启停表现</h3>
+              <h3 className="section-title">压缩机启停表现 <span style={{ color: '#ff4d4f', fontSize: '12px' }}>*必选</span></h3>
               <div className="compressor-status">
                 <div
                   className={`compressor-item ${coldMachineData?.compressorStatus === 'normal' ? 'selected' : ''}`}
@@ -376,30 +408,36 @@ function InspectionWindow({
             </div>
 
             <div>
-              <h3 className="section-title">怠速负载对比（补气前后）</h3>
+              <h3 className="section-title">怠速负载对比（补气前后）<span style={{ color: '#ff4d4f', fontSize: '12px' }}> *必填</span></h3>
               <div className="load-compare">
                 <h4>⚡ 冷机怠速负载（%）</h4>
                 <div className="load-inputs">
                   <div className="form-item">
-                    <label>补气前负载</label>
+                    <label>补气前负载 <span style={{ color: '#ff4d4f' }}>*</span></label>
                     <input
                       type="number"
                       placeholder="0-100"
-                      value={coldMachineData?.loadBefore || ''}
+                      value={coldMachineData?.loadBefore ?? ''}
                       onChange={e => handleColdMachineChange('loadBefore', e.target.value)}
+                      style={{
+                        borderColor: showColdError && !isValidNumber(coldMachineData?.loadBefore) ? '#ff4d4f' : undefined
+                      }}
                     />
                   </div>
                   <div className="form-item">
-                    <label>补气后负载</label>
+                    <label>补气后负载 <span style={{ color: '#ff4d4f' }}>*</span></label>
                     <input
                       type="number"
                       placeholder="0-100"
-                      value={coldMachineData?.loadAfter || ''}
+                      value={coldMachineData?.loadAfter ?? ''}
                       onChange={e => handleColdMachineChange('loadAfter', e.target.value)}
+                      style={{
+                        borderColor: showColdError && !isValidNumber(coldMachineData?.loadAfter) ? '#ff4d4f' : undefined
+                      }}
                     />
                   </div>
                 </div>
-                {coldMachineData?.loadBefore && coldMachineData?.loadAfter && (
+                {isValidNumber(coldMachineData?.loadBefore) && isValidNumber(coldMachineData?.loadAfter) && (
                   <div style={{ marginTop: '12px', fontSize: '13px', color: '#d48806' }}>
                     负载差值：{(parseFloat(coldMachineData.loadBefore) - parseFloat(coldMachineData.loadAfter)).toFixed(1)}%
                     {parseFloat(coldMachineData.loadBefore) - parseFloat(coldMachineData.loadAfter) > 10
@@ -409,19 +447,35 @@ function InspectionWindow({
                 )}
               </div>
 
-              {riskAssessment && (
-                <div className={`risk-assessment risk-${riskAssessment.level}`}>
-                  <div className="risk-title">
-                    {riskAssessment.level === 'high' ? '🔴 高风险' : riskAssessment.level === 'medium' ? '🟡 中风险' : '🟢 低风险'}
-                    能耗风险评估
+              {repairAdvice && (
+                <>
+                  <div className={`risk-assessment risk-${repairAdvice.riskLevel}`}>
+                    <div className="risk-title">
+                      {repairAdvice.riskLevel === 'high' ? '🔴 高风险' : repairAdvice.riskLevel === 'medium' ? '🟡 中风险' : '🟢 低风险'}
+                      能耗风险评估
+                    </div>
+                    <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.9 }}>
+                      低胎压轮位：{repairAdvice.lowTireList.length} 个 |
+                      传感器漂移：{repairAdvice.driftTireList.length} 个
+                      {repairAdvice.loadDiff !== null ? ` | 负载降幅：${repairAdvice.loadDiff.toFixed(1)}%` : ''}
+                    </div>
                   </div>
-                  <div className="risk-desc">{riskAssessment.description}</div>
-                  <div style={{ marginTop: '8px', fontSize: '12px' }}>
-                    胎压不足轮位数：{riskAssessment.lowTireCount} 个 |
-                    传感器漂移：{riskAssessment.driftCount} 个 |
-                    负载降幅：{riskAssessment.loadDiff}%
+
+                  <div style={{
+                    marginTop: '16px',
+                    padding: '16px',
+                    background: '#e6fffb',
+                    border: '1px solid #87e8de',
+                    borderRadius: '8px'
+                  }}>
+                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#08979c', marginBottom: '8px' }}>
+                      🛠 维修建议摘要
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#262626', lineHeight: 1.7 }}>
+                      {repairAdvice.adviceText}
+                    </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
           </div>
@@ -435,8 +489,10 @@ function InspectionWindow({
           ></textarea>
 
           <div className="action-bar">
-            <div style={{ color: '#8c8c8c', fontSize: '13px' }}>
-              完成冷机检查后生成交车单
+            <div style={{ color: coldValidation.valid ? '#52c41a' : '#ff4d4f', fontSize: '13px' }}>
+              {coldValidation.valid
+                ? '✓ 冷机数据已填写完整'
+                : `⚠ 还有 ${coldValidation.missing.length} 项未完成`}
             </div>
             <div className="action-bar-right">
               <button className="btn" onClick={handlePrevStep}>← 上一步</button>
@@ -451,29 +507,43 @@ function InspectionWindow({
   )
 }
 
-function TireInputItem({ position, tireData, standardPressure, onPressureChange, onSensorChange }) {
+function TireInputItem({ position, tireData, standardPressure, onPressureChange, onSensorChange, hasError }) {
   if (!tireData) return null
 
   const pressure = parseFloat(tireData.pressure)
-  const isLow = !isNaN(pressure) && pressure < standardPressure - 0.5
-  const isNormal = !isNaN(pressure) && pressure >= standardPressure - 0.5 && pressure <= standardPressure + 0.3
+  const hasValue = !isNaN(pressure)
+  const isLow = hasValue && pressure < standardPressure - 0.5
+  const isNormal = hasValue && pressure >= standardPressure - 0.5 && pressure <= standardPressure + 0.3
+
+  let borderColor = undefined
+  if (hasError) borderColor = '#ff4d4f'
+  else if (isLow) borderColor = '#ffa39e'
+  else if (isNormal) borderColor = '#b7eb8f'
 
   return (
-    <div className="tire-item" style={{ borderColor: isLow ? '#ffa39e' : isNormal ? '#b7eb8f' : undefined }}>
+    <div className="tire-item" style={{ borderColor }}>
       <h4>{position.label}</h4>
       <div className="tire-pressure-input">
         <input
           type="number"
           step="0.1"
           placeholder="实测胎压"
-          value={tireData.pressure}
+          value={tireData.pressure ?? ''}
           onChange={e => onPressureChange(e.target.value)}
+          style={{
+            borderColor: hasError ? '#ff4d4f' : undefined
+          }}
         />
         <span>Bar</span>
       </div>
-      {!isNaN(pressure) && (
+      {hasValue && (
         <div style={{ fontSize: '12px', marginBottom: '10px', color: isLow ? '#cf1322' : '#389e0d' }}>
           {isLow ? '⚠ 低于标准，建议补气' : isNormal ? '✓ 胎压正常' : '胎压偏高'}
+        </div>
+      )}
+      {hasError && (
+        <div style={{ fontSize: '12px', marginBottom: '10px', color: '#cf1322' }}>
+          ⚠ 必填项
         </div>
       )}
       <div className="sensor-options">

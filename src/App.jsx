@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
+import { Routes, Route } from 'react-router-dom'
 import VehicleList from './pages/VehicleList.jsx'
 import InspectionWindow from './pages/InspectionWindow.jsx'
 import DeliveryOrder from './pages/DeliveryOrder.jsx'
+import InspectionHistory from './pages/InspectionHistory.jsx'
 import { store } from './store.js'
 
 function App() {
   const [vehicles, setVehicles] = useState([])
   const [inspections, setInspections] = useState([])
+  const [deliveryOrders, setDeliveryOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -16,12 +18,14 @@ function App() {
 
   async function loadData() {
     try {
-      const [vData, iData] = await Promise.all([
+      const [vData, iData, dData] = await Promise.all([
         store.getVehicles(),
-        store.getInspections()
+        store.getInspections(),
+        store.getDeliveryOrders()
       ])
       setVehicles(vData)
       setInspections(iData)
+      setDeliveryOrders(dData)
     } catch (e) {
       console.error('加载数据失败:', e)
     } finally {
@@ -39,12 +43,22 @@ function App() {
     await store.saveInspections(newInspections)
   }
 
+  async function saveDeliveryOrders(newOrders) {
+    setDeliveryOrders(newOrders)
+    await store.saveDeliveryOrders(newOrders)
+  }
+
   function getVehicleById(id) {
     return vehicles.find(v => v.id === id)
   }
 
   function getInspectionByVehicleId(vehicleId) {
     return inspections.find(i => i.vehicleId === vehicleId)
+  }
+
+  function getDeliveryOrdersByVehicleId(vehicleId) {
+    return deliveryOrders.filter(o => o.vehicleId === vehicleId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
   }
 
   if (loading) {
@@ -77,6 +91,7 @@ function App() {
               <VehicleList
                 vehicles={vehicles}
                 inspections={inspections}
+                deliveryOrders={deliveryOrders}
                 saveVehicles={saveVehicles}
                 saveInspections={saveInspections}
               />
@@ -105,6 +120,17 @@ function App() {
                 inspections={inspections}
                 saveVehicles={saveVehicles}
                 vehicles={vehicles}
+                deliveryOrders={deliveryOrders}
+                saveDeliveryOrders={saveDeliveryOrders}
+              />
+            }
+          />
+          <Route
+            path="/history/:vehicleId"
+            element={
+              <InspectionHistory
+                getVehicleById={getVehicleById}
+                getDeliveryOrdersByVehicleId={getDeliveryOrdersByVehicleId}
               />
             }
           />

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-function VehicleList({ vehicles, inspections, saveVehicles, saveInspections }) {
+function VehicleList({ vehicles, inspections, deliveryOrders, saveVehicles, saveInspections }) {
   const navigate = useNavigate()
   const [searchText, setSearchText] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
@@ -30,12 +30,26 @@ function VehicleList({ vehicles, inspections, saveVehicles, saveInspections }) {
     return inspection || null
   }
 
+  function getLastDeliveryOrder(vehicleId) {
+    const orders = deliveryOrders.filter(o => o.vehicleId === vehicleId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    return orders.length > 0 ? orders[0] : null
+  }
+
+  function getDeliveryOrderCount(vehicleId) {
+    return deliveryOrders.filter(o => o.vehicleId === vehicleId).length
+  }
+
   function handleStartInspection(vehicle) {
     navigate(`/inspection/${vehicle.id}`)
   }
 
   function handleViewDelivery(vehicle) {
     navigate(`/delivery/${vehicle.id}`)
+  }
+
+  function handleViewHistory(vehicle) {
+    navigate(`/history/${vehicle.id}`)
   }
 
   function handleAddVehicle() {
@@ -93,8 +107,9 @@ function VehicleList({ vehicles, inspections, saveVehicles, saveInspections }) {
                 <th>车牌号</th>
                 <th>车型</th>
                 <th>承运商</th>
-                <th>标准胎压 (Bar)</th>
+                <th>标准胎压</th>
                 <th>状态</th>
+                <th>历史交车单</th>
                 <th>最近检查</th>
                 <th>操作</th>
               </tr>
@@ -102,27 +117,49 @@ function VehicleList({ vehicles, inspections, saveVehicles, saveInspections }) {
             <tbody>
               {filteredVehicles.map(vehicle => {
                 const inspection = getInspectionInfo(vehicle.id)
+                const lastOrder = getLastDeliveryOrder(vehicle.id)
+                const orderCount = getDeliveryOrderCount(vehicle.id)
                 const statusInfo = statusMap[vehicle.status] || statusMap.pending
                 return (
                   <tr key={vehicle.id}>
                     <td style={{ fontWeight: 600, fontSize: '15px' }}>{vehicle.plate}</td>
                     <td>{vehicle.model}</td>
                     <td>{vehicle.carrier}</td>
-                    <td style={{ textAlign: 'center' }}>{vehicle.standardPressure}</td>
+                    <td style={{ textAlign: 'center' }}>{vehicle.standardPressure} Bar</td>
                     <td>
                       <span className={`status-tag ${statusInfo.className}`}>
                         {statusInfo.text}
                       </span>
                     </td>
+                    <td>
+                      {orderCount > 0 ? (
+                        <span
+                          onClick={() => handleViewHistory(vehicle)}
+                          style={{ color: '#1890ff', cursor: 'pointer', textDecoration: 'underline' }}
+                        >
+                          共 {orderCount} 条（{lastOrder?.createdAtStr?.slice(0, 10) || ''}）
+                        </span>
+                      ) : (
+                        <span style={{ color: '#bfbfbf' }}>无</span>
+                      )}
+                    </td>
                     <td style={{ color: '#8c8c8c', fontSize: '13px' }}>
                       {inspection ? inspection.startTime : '未检查'}
                     </td>
-                    <td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ marginRight: '6px' }}
+                        onClick={() => handleViewHistory(vehicle)}
+                        title="查看历史记录"
+                      >
+                        📜 历史
+                      </button>
                       {vehicle.status === 'completed' ? (
                         <>
                           <button
                             className="btn btn-sm btn-success"
-                            style={{ marginRight: '8px' }}
+                            style={{ marginRight: '6px' }}
                             onClick={() => handleViewDelivery(vehicle)}
                           >
                             查看交车单
@@ -173,10 +210,16 @@ function VehicleList({ vehicles, inspections, saveVehicles, saveInspections }) {
             <div style={{ fontSize: '13px', color: '#8c8c8c', marginTop: '4px' }}>已完成</div>
           </div>
           <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '28px', fontWeight: 700, color: '#722ed1' }}>
+              {deliveryOrders.length}
+            </div>
+            <div style={{ fontSize: '13px', color: '#8c8c8c', marginTop: '4px' }}>累计交车单</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '28px', fontWeight: 700, color: '#262626' }}>
               {vehicles.length}
             </div>
-            <div style={{ fontSize: '13px', color: '#8c8c8c', marginTop: '4px' }}>总计</div>
+            <div style={{ fontSize: '13px', color: '#8c8c8c', marginTop: '4px' }}>总计车辆</div>
           </div>
         </div>
       </div>

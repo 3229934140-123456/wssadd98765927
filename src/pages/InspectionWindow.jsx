@@ -5,12 +5,14 @@ import {
   isValidNumber,
   validateTireData,
   validateColdMachineData,
-  generateRepairAdvice
+  generateRepairAdvice,
+  extractProblemItemsFromOrder
 } from '../utils.js'
 
 function InspectionWindow({
   getVehicleById,
   getInspectionByVehicleId,
+  getLatestDeliveryOrderByVehicleId,
   saveInspections,
   inspections,
   saveVehicles,
@@ -20,6 +22,7 @@ function InspectionWindow({
   const navigate = useNavigate()
   const vehicle = getVehicleById(vehicleId)
   const existingInspection = getInspectionByVehicleId(vehicleId)
+  const latestOrder = getLatestDeliveryOrderByVehicleId(vehicleId)
 
   const [currentStep, setCurrentStep] = useState(1)
   const [inspector, setInspector] = useState('')
@@ -29,12 +32,15 @@ function InspectionWindow({
   const [coldValidation, setColdValidation] = useState({ valid: true, missing: [] })
   const [showTireError, setShowTireError] = useState(false)
   const [showColdError, setShowColdError] = useState(false)
+  const [problemItems, setProblemItems] = useState(null)
 
   useEffect(() => {
     if (existingInspection) {
       setInspector(existingInspection.inspector || '')
-      setTireData(existingInspection.tireData || initEmptyTireData())
-      setColdMachineData(existingInspection.coldMachineData || initEmptyColdData())
+      const td = existingInspection.tireData || initEmptyTireData()
+      setTireData(td)
+      const cold = existingInspection.coldMachineData || initEmptyColdData()
+      setColdMachineData(cold)
       if (existingInspection.status === 'tire_done') {
         setCurrentStep(2)
       } else if (existingInspection.status === 'cold_done' || existingInspection.status === 'completed') {
@@ -44,7 +50,13 @@ function InspectionWindow({
       setTireData(initEmptyTireData())
       setColdMachineData(initEmptyColdData())
     }
-  }, [vehicleId])
+    if (latestOrder) {
+      const problems = extractProblemItemsFromOrder(latestOrder)
+      if (problems.focusTires.length > 0 || problems.focusColdItems.length > 0) {
+        setProblemItems(problems)
+      }
+    }
+  }, [vehicleId, latestOrder])
 
   useEffect(() => {
     setTireValidation(validateTireData(tireData))
@@ -66,7 +78,7 @@ function InspectionWindow({
     return {
       returnTemp: '',
       setTemp: '',
-      compressorStatus: 'normal',
+      compressorStatus: '',
       loadBefore: '',
       loadAfter: '',
       remarks: ''
@@ -138,10 +150,16 @@ function InspectionWindow({
     const now = new Date()
     const timeStr = now.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
 
+    const linkedData = problemItems ? {
+      ...tireData,
+      _linkToOrder: problemItems.prevOrderId,
+      _linkOrderNo: problemItems.prevOrderNo
+    } : tireData
+
     if (existingInspection) {
       const updated = inspections.map(i =>
         i.id === existingInspection.id
-          ? { ...i, tireData, inspector, status: 'tire_done' }
+          ? { ...i, tireData: linkedData, inspector, status: 'tire_done' }
           : i
       )
       await saveInspections(updated)
@@ -153,8 +171,10 @@ function InspectionWindow({
         inspector,
         startTime: timeStr,
         status: 'tire_done',
-        tireData,
-        coldMachineData: null
+        tireData: linkedData,
+        coldMachineData: null,
+        linkToOrder: problemItems ? problemItems.prevOrderId : null,
+        linkOrderNo: problemItems ? problemItems.prevOrderNo : null
       }
       await saveInspections([...inspections, newInspection])
 
@@ -178,7 +198,16 @@ function InspectionWindow({
     if (existingInspection) {
       const updated = inspections.map(i =>
         i.id === existingInspection.id
-          ? { ...i, tireData, coldMachineData: coldDataWithAdvice, inspector, endTime: timeStr, status: 'cold_done' }
+          ? {
+              ...i,
+              tireData,
+              coldMachineData: coldDataWithAdvice,
+              inspector,
+              endTime: timeStr,
+              status: 'cold_done',
+              linkToOrder: problemItems ? problemItems.prevOrderId : i.linkToOrder,
+              linkOrderNo: problemItems ? problemItems.prevOrderNo : i.linkOrderNo
+            }
           : i
       )
       await saveInspections(updated)
@@ -192,7 +221,9 @@ function InspectionWindow({
         endTime: timeStr,
         status: 'cold_done',
         tireData,
-        coldMachineData: coldDataWithAdvice
+        coldMachineData: coldDataWithAdvice,
+        linkToOrder: problemItems ? problemItems.prevOrderId : null,
+        linkOrderNo: problemItems ? problemItems.prevOrderNo : null
       }
       await saveInspections([...inspections, newInspection])
     }
@@ -211,26 +242,86 @@ function InspectionWindow({
     return <div>车辆不存在</div>
   }
 
+  const isFocusTire = (key) => problemItems?.focusTires.some(t => t.key === key)
+  const focusColdKey = (key) => problemItems?.focusColdItems.some(c => c.key === key)
+
   function renderTireItems(category) {
-    return TIRE_POSITIONS.filter(p => p.category === category).map(pos => (
-      <TireInputItem
-        key={pos.key}
-        position={pos}
-        tireData={tireData[pos.key]}
-        standardPressure={vehicle.standardPressure}
-        onPressureChange={val => handleTirePressureChange(pos.key, val)}
-        onSensorChange={status => handleSensorStatusChange(pos.key, status)}
-        hasError={showTireError && tireData[pos.key] && !isValidNumber(tireData[pos.key].pressure)}
-      />
-    ))
+    return TIRE_POSITIONS.filter(p => p.category === category).map(pos => {
+      const focus = isFocusTire(pos.key)
+      const focusInfo = problemItems?.focusTires.find(t => t.key === pos.key)
+      return (
+        <TireInputItem
+          key={pos.key}
+          position={pos}
+          tireData={tireData[pos.key]}
+          standardPressure={vehicle.standardPressure}
+          onPressureChange={val => handleTirePressureChange(pos.key, val)}
+          onSensorChange={status => handleSensorStatusChange(pos.key, status)}
+          hasError={showTireError && tireData[pos.key] && !isValidNumber(tireData[pos.key].pressure)}
+          isFocus={focus}
+          focusInfo={focusInfo}
+        />
+      )
+    })
   }
 
   return (
     <div>
       <div className="page-header">
-        <h2>🔧 车辆检查</h2>
+        <h2>🔧 车辆检查{problemItems ? '（复检）' : ''}</h2>
         <button className="btn" onClick={handleBack}>← 返回车辆列表</button>
       </div>
+
+      {problemItems && (
+        <div className="card" style={{
+          borderLeft: '4px solid #fa8c16',
+          background: '#fffbe6'
+        }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#d46b08', marginBottom: '10px' }}>
+            🔍 本次为复检（关联单号：{problemItems.prevOrderNo}）— 请重点复查以下项目：
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+            {problemItems.focusTires.length > 0 && (
+              <div>
+                <strong>🛞 轮位：</strong>
+                {problemItems.focusTires.map(t => (
+                  <span key={t.key} style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    margin: '0 4px 4px 0',
+                    background: '#fff1f0',
+                    border: '1px solid #ffa39e',
+                    color: '#cf1322',
+                    borderRadius: '4px'
+                  }}>
+                    {t.label}
+                    {t.prevPressure !== null ? ` (上次${t.prevPressure.toFixed(1)}Bar)` : ''}
+                    {t.prevDrift ? ' · 漂移' : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+            {problemItems.focusColdItems.length > 0 && (
+              <div>
+                <strong>❄️ 冷机：</strong>
+                {problemItems.focusColdItems.map(c => (
+                  <span key={c.key} style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    margin: '0 4px 4px 0',
+                    background: '#fff7e6',
+                    border: '1px solid #ffd591',
+                    color: '#d46b08',
+                    borderRadius: '4px'
+                  }}>
+                    {c.label}（上次：{c.prevValue}）
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="step-indicator">
         <div className={`step-item ${currentStep >= 1 ? (currentStep > 1 ? 'done' : 'active') : ''}`}>
@@ -268,7 +359,7 @@ function InspectionWindow({
               type="text"
               value={inspector}
               onChange={e => setInspector(e.target.value)}
-              placeholder="请输入姓名"
+              placeholder="请输入姓名 *"
               style={{ width: '120px', padding: '4px 8px', border: '1px solid #91d5ff', borderRadius: '4px' }}
             />
           </span>
@@ -362,7 +453,9 @@ function InspectionWindow({
                     value={coldMachineData?.returnTemp ?? ''}
                     onChange={e => handleColdMachineChange('returnTemp', e.target.value)}
                     style={{
-                      borderColor: showColdError && !isValidNumber(coldMachineData?.returnTemp) ? '#ff4d4f' : undefined
+                      borderColor: (showColdError && !isValidNumber(coldMachineData?.returnTemp))
+                        || (focusColdKey('temp')) ? '#ff4d4f' : undefined,
+                      boxShadow: focusColdKey('temp') ? '0 0 0 2px #ffd66655' : undefined
                     }}
                   />
                 </div>
@@ -381,11 +474,23 @@ function InspectionWindow({
                 </div>
               </div>
 
-              <h3 className="section-title">压缩机启停表现 <span style={{ color: '#ff4d4f', fontSize: '12px' }}>*必选</span></h3>
-              <div className="compressor-status">
+              <h3 className="section-title">
+                压缩机启停表现 <span style={{ color: '#ff4d4f', fontSize: '12px' }}>*必须手动点选</span>
+                {focusColdKey('compressor') && (
+                  <span style={{ fontSize: '12px', color: '#d46b08', marginLeft: '10px' }}>（上次有问题，重点复查）</span>
+                )}
+              </h3>
+              <div className="compressor-status" style={{
+                border: showColdError && !coldMachineData?.compressorStatus ? '2px dashed #ff4d4f' : 'none',
+                borderRadius: '8px',
+                padding: showColdError && !coldMachineData?.compressorStatus ? '8px' : '0'
+              }}>
                 <div
                   className={`compressor-item ${coldMachineData?.compressorStatus === 'normal' ? 'selected' : ''}`}
                   onClick={() => handleColdMachineChange('compressorStatus', 'normal')}
+                  style={{
+                    borderColor: focusColdKey('compressor') ? '#fa8c16' : undefined
+                  }}
                 >
                   <div className="icon">✅</div>
                   <div className="text">启停正常</div>
@@ -393,6 +498,9 @@ function InspectionWindow({
                 <div
                   className={`compressor-item ${coldMachineData?.compressorStatus === 'frequent' ? 'selected' : ''}`}
                   onClick={() => handleColdMachineChange('compressorStatus', 'frequent')}
+                  style={{
+                    borderColor: focusColdKey('compressor') ? '#fa8c16' : undefined
+                  }}
                 >
                   <div className="icon">⚠️</div>
                   <div className="text">启停频繁</div>
@@ -400,15 +508,29 @@ function InspectionWindow({
                 <div
                   className={`compressor-item ${coldMachineData?.compressorStatus === 'not_start' ? 'selected' : ''}`}
                   onClick={() => handleColdMachineChange('compressorStatus', 'not_start')}
+                  style={{
+                    borderColor: focusColdKey('compressor') ? '#fa8c16' : undefined
+                  }}
                 >
                   <div className="icon">❌</div>
                   <div className="text">无法启动</div>
                 </div>
               </div>
+              {showColdError && !coldMachineData?.compressorStatus && (
+                <div style={{ color: '#ff4d4f', fontSize: '12px', marginTop: '6px' }}>
+                  ⚠ 请点选压缩机状态
+                </div>
+              )}
             </div>
 
             <div>
-              <h3 className="section-title">怠速负载对比（补气前后）<span style={{ color: '#ff4d4f', fontSize: '12px' }}> *必填</span></h3>
+              <h3 className="section-title">
+                怠速负载对比（补气前后）
+                <span style={{ color: '#ff4d4f', fontSize: '12px' }}> *必填</span>
+                {focusColdKey('load') && (
+                  <span style={{ fontSize: '12px', color: '#d46b08', marginLeft: '10px' }}>（上次差值大，重点复查）</span>
+                )}
+              </h3>
               <div className="load-compare">
                 <h4>⚡ 冷机怠速负载（%）</h4>
                 <div className="load-inputs">
@@ -420,7 +542,8 @@ function InspectionWindow({
                       value={coldMachineData?.loadBefore ?? ''}
                       onChange={e => handleColdMachineChange('loadBefore', e.target.value)}
                       style={{
-                        borderColor: showColdError && !isValidNumber(coldMachineData?.loadBefore) ? '#ff4d4f' : undefined
+                        borderColor: (showColdError && !isValidNumber(coldMachineData?.loadBefore))
+                          || focusColdKey('load') ? '#ff4d4f' : undefined
                       }}
                     />
                   </div>
@@ -432,7 +555,8 @@ function InspectionWindow({
                       value={coldMachineData?.loadAfter ?? ''}
                       onChange={e => handleColdMachineChange('loadAfter', e.target.value)}
                       style={{
-                        borderColor: showColdError && !isValidNumber(coldMachineData?.loadAfter) ? '#ff4d4f' : undefined
+                        borderColor: (showColdError && !isValidNumber(coldMachineData?.loadAfter))
+                          || focusColdKey('load') ? '#ff4d4f' : undefined
                       }}
                     />
                   </div>
@@ -469,7 +593,7 @@ function InspectionWindow({
                     borderRadius: '8px'
                   }}>
                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#08979c', marginBottom: '8px' }}>
-                      🛠 维修建议摘要
+                      🛠 维修建议摘要（补气前后对比）
                     </div>
                     <div style={{ fontSize: '13px', color: '#262626', lineHeight: 1.7 }}>
                       {repairAdvice.adviceText}
@@ -507,7 +631,7 @@ function InspectionWindow({
   )
 }
 
-function TireInputItem({ position, tireData, standardPressure, onPressureChange, onSensorChange, hasError }) {
+function TireInputItem({ position, tireData, standardPressure, onPressureChange, onSensorChange, hasError, isFocus, focusInfo }) {
   if (!tireData) return null
 
   const pressure = parseFloat(tireData.pressure)
@@ -516,12 +640,32 @@ function TireInputItem({ position, tireData, standardPressure, onPressureChange,
   const isNormal = hasValue && pressure >= standardPressure - 0.5 && pressure <= standardPressure + 0.3
 
   let borderColor = undefined
-  if (hasError) borderColor = '#ff4d4f'
+  if (isFocus) borderColor = '#fa8c16'
+  else if (hasError) borderColor = '#ff4d4f'
   else if (isLow) borderColor = '#ffa39e'
   else if (isNormal) borderColor = '#b7eb8f'
 
   return (
-    <div className="tire-item" style={{ borderColor }}>
+    <div className="tire-item" style={{
+      borderColor,
+      boxShadow: isFocus ? '0 0 0 3px #ffd66655, 0 2px 12px #fa8c1633' : undefined,
+      position: 'relative'
+    }}>
+      {isFocus && (
+        <div style={{
+          position: 'absolute',
+          top: '-10px',
+          right: '10px',
+          background: '#fa8c16',
+          color: '#fff',
+          padding: '2px 8px',
+          borderRadius: '10px',
+          fontSize: '11px',
+          fontWeight: 600
+        }}>
+          ⚠ 重点复查
+        </div>
+      )}
       <h4>{position.label}</h4>
       <div className="tire-pressure-input">
         <input
@@ -536,6 +680,12 @@ function TireInputItem({ position, tireData, standardPressure, onPressureChange,
         />
         <span>Bar</span>
       </div>
+      {focusInfo && (
+        <div style={{ fontSize: '11px', color: '#d46b08', marginBottom: '6px' }}>
+          上次记录：{focusInfo.prevPressure !== null ? `${focusInfo.prevPressure.toFixed(1)} Bar` : '未记'}
+          {focusInfo.prevDrift ? ' · 漂移' : ''}
+        </div>
+      )}
       {hasValue && (
         <div style={{ fontSize: '12px', marginBottom: '10px', color: isLow ? '#cf1322' : '#389e0d' }}>
           {isLow ? '⚠ 低于标准，建议补气' : isNormal ? '✓ 胎压正常' : '胎压偏高'}

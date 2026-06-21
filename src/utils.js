@@ -76,8 +76,8 @@ export function validateColdMachineData(coldMachineData) {
   if (!isValidNumber(coldMachineData.setTemp)) {
     missing.push('设定温度未填写')
   }
-  if (!coldMachineData.compressorStatus) {
-    missing.push('压缩机状态未选择')
+  if (!coldMachineData.compressorStatus || coldMachineData.compressorStatus === '') {
+    missing.push('压缩机状态未点选（请手动选择"启停正常/频繁/无法启动"）')
   }
   if (!isValidNumber(coldMachineData.loadBefore)) {
     missing.push('补气前负载未填写')
@@ -230,4 +230,113 @@ export function generateOrderNo(vehicleId) {
   const suffix = (vehicleId || 'XXXX').slice(-4).toUpperCase()
   const seq = String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0')
   return `JC${datePart}-${seq}-${suffix}`
+}
+
+export function extractProblemItemsFromOrder(order) {
+  const result = {
+    focusTires: [],
+    focusColdItems: [],
+    prevOrderId: order ? order.id : null,
+    prevOrderNo: order ? order.orderNo : null
+  }
+  if (!order) return result
+
+  const tireData = order.tireData || {}
+  const standard = order.standardPressure || 8.5
+  Object.entries(tireData).forEach(([key, tire]) => {
+    const pos = tirePositions.find(p => p.key === key)
+    if (!pos) return
+    const pressure = parseFloat(tire.pressure)
+    const hasProblem = (!isNaN(pressure) && pressure < standard - 0.5) || tire.sensorStatus === 'drift'
+    if (hasProblem) {
+      result.focusTires.push({
+        key,
+        label: pos.label,
+        prevPressure: !isNaN(pressure) ? pressure : null,
+        prevDrift: tire.sensorStatus === 'drift'
+      })
+    }
+  })
+
+  const cold = order.coldMachineData || {}
+  if (cold.compressorStatus && cold.compressorStatus !== 'normal') {
+    result.focusColdItems.push({
+      key: 'compressor',
+      label: '压缩机启停表现',
+      prevValue: cold.compressorStatus
+    })
+  }
+  const loadB = parseFloat(cold.loadBefore)
+  const loadA = parseFloat(cold.loadAfter)
+  if (!isNaN(loadB) && !isNaN(loadA) && loadB - loadA > 10) {
+    result.focusColdItems.push({
+      key: 'load',
+      label: '怠速负载对比',
+      prevValue: `差值 ${(loadB - loadA).toFixed(1)}%`
+    })
+  }
+  const rt = parseFloat(cold.returnTemp)
+  const st = parseFloat(cold.setTemp)
+  if (!isNaN(rt) && !isNaN(st) && rt > st + 3) {
+    result.focusColdItems.push({
+      key: 'temp',
+      label: '回风温度偏高',
+      prevValue: `回风 ${rt.toFixed(1)}°C / 设定 ${st.toFixed(1)}°C`
+    })
+  }
+
+  return result
+}
+
+export function buildTrendData(orders) {
+  const sorted = [...orders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+
+  const tireTrend = {}
+  tirePositions.forEach(pos => {
+    tireTrend[pos.key] = {
+      label: pos.label,
+      category: pos.category,
+      pressures: [],
+      driftCount: 0,
+      lowCount: 0
+    }
+  })
+
+  const coldTrend = {
+    labels: [],
+    returnTemps: [],
+    setTemps: [],
+    loadBefores: [],
+    loadAfters: [],
+    loadDiffs: [],
+    compressorStatuses: []
+  }
+
+  sorted.forEach(order => {
+    const shortLabel = order.createdAtStr ? order.createdAtStr.slice(5, 16).replace(' ', '\n') : ''
+    coldTrend.labels.push(shortLabel)
+
+    const tireData = order.tireData || {}
+    const standard = order.standardPressure || 8.5
+    Object.entries(tireData).forEach(([key, tire]) => {
+      if (tireTrend[key]) {
+        const pressure = parseFloat(tire.pressure)
+        tireTrend[key].pressures.push(isNaN(pressure) ? null : pressure)
+        if (tire.sensorStatus === 'drift') tireTrend[key].driftCount++
+        if (!isNaN(pressure) && pressure < standard - 0.5) tireTrend[key].lowCount++
+      }
+    })
+
+    const cold = order.coldMachineData || {}
+    coldTrend.returnTemps.push(parseFloat(cold.returnTemp))
+    coldTrend.setTemps.push(parseFloat(cold.setTemp))
+    coldTrend.loadBefores.push(parseFloat(cold.loadBefore))
+    coldTrend.loadAfters.push(parseFloat(cold.loadAfter))
+    const lb = parseFloat(cold.loadBefore)
+    const la = parseFloat(cold.loadAfter)
+    coldTrend.loadDiffs.push(!isNaN(lb) && !isNaN(la) ? lb - la : null)
+    coldTrend.compressorStatuses.push(cold.compressorStatus || '')
+  })
+
+  return { tireTrend, coldTrend, orderCount: sorted.length }
 }

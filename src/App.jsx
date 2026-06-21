@@ -4,6 +4,7 @@ import VehicleList from './pages/VehicleList.jsx'
 import InspectionWindow from './pages/InspectionWindow.jsx'
 import DeliveryOrder from './pages/DeliveryOrder.jsx'
 import InspectionHistory from './pages/InspectionHistory.jsx'
+import DeliveryArchive from './pages/DeliveryArchive.jsx'
 import { store } from './store.js'
 
 function App() {
@@ -61,6 +62,16 @@ function App() {
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
   }
 
+  function getLatestDeliveryOrderByVehicleId(vehicleId) {
+    const orders = deliveryOrders.filter(o => o.vehicleId === vehicleId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    return orders.length > 0 ? orders[0] : null
+  }
+
+  function getDeliveryOrderById(orderId) {
+    return deliveryOrders.find(o => o.id === orderId)
+  }
+
   if (loading) {
     return (
       <div className="app-container">
@@ -78,8 +89,12 @@ function App() {
           <h1>❄️ 冷藏车维保系统</h1>
           <div className="sub-title">胎压与冷机联动巡检 · 出车前安全检查</div>
         </div>
-        <div style={{ fontSize: '13px', opacity: 0.9 }}>
-          维修班组工作台
+        <div style={{ fontSize: '13px', opacity: 0.9, display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <span style={{ cursor: 'pointer' }}
+            onClick={() => window.location.hash = '#/archive'}>
+            📂 交车单归档
+          </span>
+          <span>维修班组工作台</span>
         </div>
       </header>
 
@@ -103,6 +118,7 @@ function App() {
               <InspectionWindow
                 getVehicleById={getVehicleById}
                 getInspectionByVehicleId={getInspectionByVehicleId}
+                getLatestDeliveryOrderByVehicleId={getLatestDeliveryOrderByVehicleId}
                 saveInspections={saveInspections}
                 inspections={inspections}
                 saveVehicles={saveVehicles}
@@ -131,6 +147,28 @@ function App() {
               <InspectionHistory
                 getVehicleById={getVehicleById}
                 getDeliveryOrdersByVehicleId={getDeliveryOrdersByVehicleId}
+              />
+            }
+          />
+          <Route
+            path="/archive"
+            element={
+              <DeliveryArchive
+                vehicles={vehicles}
+                deliveryOrders={deliveryOrders}
+                getVehicleById={getVehicleById}
+                getDeliveryOrderById={getDeliveryOrderById}
+              />
+            }
+          />
+          <Route
+            path="/archive/view/:orderId"
+            element={
+              <DeliveryArchive
+                vehicles={vehicles}
+                deliveryOrders={deliveryOrders}
+                getVehicleById={getVehicleById}
+                getDeliveryOrderById={getDeliveryOrderById}
               />
             }
           />

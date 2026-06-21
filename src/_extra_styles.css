@@ -1,0 +1,211 @@
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.btn-sm.btn-primary {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.delivery-order {
+  max-width: 900px;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.order-header {
+  text-align: center;
+  padding: 20px;
+  border-bottom: 2px solid #1890ff;
+  margin-bottom: 24px;
+}
+
+.order-header h2 {
+  color: #262626;
+  font-size: 22px;
+  margin-bottom: 8px;
+}
+
+.order-no {
+  font-family: monospace;
+  color: #8c8c8c;
+  font-size: 13px;
+}
+
+.order-section {
+  margin-bottom: 24px;
+}
+
+.order-section h3 {
+  font-size: 15px;
+  color: #262626;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: #e6f7ff;
+  border-left: 3px solid #1890ff;
+}
+
+.order-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.order-info-item {
+  display: flex;
+  padding: 8px 12px;
+  background: #fafafa;
+  border-radius: 4px;
+  gap: 8px;
+}
+
+.order-info-item .label {
+  color: #8c8c8c;
+  font-size: 13px;
+  min-width: 80px;
+}
+
+.order-info-item .value {
+  font-size: 14px;
+  color: #262626;
+  flex: 1;
+}
+
+.tire-result-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tire-result-table th,
+.tire-result-table td {
+  padding: 10px;
+  border: 1px solid #e8e8e8;
+  text-align: center;
+  font-size: 13px;
+}
+
+.tire-result-table th {
+  background: #fafafa;
+  color: #595959;
+  font-weight: 600;
+}
+
+.final-result {
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  margin: 24px 0;
+}
+
+.final-result.approved {
+  background: #f6ffed;
+  border: 2px solid #52c41a;
+}
+
+.final-result.rejected {
+  background: #fff1f0;
+  border: 2px solid #ff4d4f;
+}
+
+.final-result .result-text {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.final-result.approved .result-text { color: #389e0d; }
+.final-result.rejected .result-text { color: #cf1322; }
+
+.signature-area {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px dashed #d9d9d9;
+}
+
+.signature-item {
+  text-align: center;
+}
+
+.signature-line {
+  height: 40px;
+  border-bottom: 1px solid #262626;
+  margin-bottom: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+table th, table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+table th {
+  background: #fafafa;
+  color: #595959;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+table tbody tr:hover {
+  background: #fafafa;
+}
+
+@media print {
+  .app-header, .page-header { display: none !important; }
+  .app-main { padding: 0 !important; }
+  .delivery-order { box-shadow: none !important; }
+}
+
+.recheck-banner {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-left: 4px solid #fa8c16;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.recheck-banner .title {
+  font-weight: 600;
+  color: #d46b08;
+  margin-bottom: 6px;
+}
+
+.recheck-banner .items {
+  font-size: 13px;
+  color: #595959;
+}
+
+.focus-tire-card {
+  border: 2px solid #fa8c16 !important;
+  box-shadow: 0 2px 12px rgba(250, 140, 22, 0.15) !important;
+  position: relative;
+}
+
+.focus-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #fa8c16;
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.prev-value-note {
+  font-size: 11px;
+  color: #d46b08;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px dashed #ffe58f;
+}
